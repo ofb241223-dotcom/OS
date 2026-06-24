@@ -1,0 +1,5 @@
+linux/src/output/*
+windows/src/output/*
+*.bak
+*.png
+*.jpg
