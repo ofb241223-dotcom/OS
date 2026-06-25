@@ -44,6 +44,14 @@ void sem_signal_op(int semid, int semnum) {
     }
 }
 
+void log_action(int semid, int id, int round, const char *action, const char *details) {
+    int print_mutex_sem = PHILOSOPHER_COUNT; // The 6th semaphore is for print serialization
+    sem_wait_op(semid, print_mutex_sem);
+    printf("|   P%d   |   %d   | %-14s | %-18s |\n", id, round, action, details);
+    fflush(stdout);
+    sem_signal_op(semid, print_mutex_sem);
+}
+
 void philosopher_process(int semid, int id) {
     int left = id;
     int right = (id + 1) % PHILOSOPHER_COUNT;
@@ -52,8 +60,8 @@ void philosopher_process(int semid, int id) {
     int round;
 
     /*
-     * 偶数号哲学家先拿左叉子，奇数号哲学家先拿右叉子。
-     * 这样可以打破“循环等待”，避免五个人同时按同一方向拿叉子造成死锁。
+     * Even-numbered philosophers pick up the left fork first, odd-numbered pick up the right fork first.
+     * This breaks circular wait, preventing deadlocks.
      */
     if (id % 2 == 0) {
         first_fork = left;
@@ -66,45 +74,49 @@ void philosopher_process(int semid, int id) {
     srand((unsigned int)(time(NULL) ^ (getpid() << 8)));
 
     for (round = 1; round <= EAT_TIMES; ++round) {
-        printf("Philosopher %d is thinking. (round %d)\n", id, round);
-        fflush(stdout);
+        // Round 1 details: log Hungry
+        if (round == 1) {
+            log_action(semid, id, round, "Hungry", "Wants to eat");
+        }
+
+        // Silent thinking sleep
         sleep(rand() % 2 + 1);
 
-        printf("Philosopher %d is hungry.\n", id);
-        fflush(stdout);
-
         sem_wait_op(semid, first_fork);
-        printf("Philosopher %d picked up fork %d.\n", id, first_fork);
-        fflush(stdout);
-
         sem_wait_op(semid, second_fork);
-        printf("Philosopher %d picked up fork %d.\n", id, second_fork);
-        printf("Philosopher %d is eating.\n", id);
-        fflush(stdout);
+        
+        // Eating is logged for all rounds to track progress
+        log_action(semid, id, round, "Eating", "Meal in progress");
         sleep(rand() % 2 + 1);
 
         sem_signal_op(semid, second_fork);
         sem_signal_op(semid, first_fork);
-        printf("Philosopher %d put down forks %d and %d.\n", id, first_fork, second_fork);
-        fflush(stdout);
+        
+        // Round 1 details: log Put Down
+        if (round == 1) {
+            char details[32];
+            sprintf(details, "Forks %d & %d free", first_fork, second_fork);
+            log_action(semid, id, round, "Put Down", details);
+        }
     }
 
-    printf("Philosopher %d finished all rounds and leaves the table.\n", id);
-    fflush(stdout);
+    // Always log Leaving
+    log_action(semid, id, EAT_TIMES, "Leaving", "All rounds done");
     exit(0);
 }
 
 int main(void) {
     int semid;
     union semun sem_arg;
-    unsigned short values[PHILOSOPHER_COUNT];
+    unsigned short values[PHILOSOPHER_COUNT + 1]; // 5 forks + 1 print mutex
     int i;
 
     for (i = 0; i < PHILOSOPHER_COUNT; ++i) {
         values[i] = 1;
     }
+    values[PHILOSOPHER_COUNT] = 1; // Print mutex semaphore set to 1
 
-    semid = semget(SEM_KEY, PHILOSOPHER_COUNT, IPC_CREAT | 0666);
+    semid = semget(SEM_KEY, PHILOSOPHER_COUNT + 1, IPC_CREAT | 0666);
     if (semid == -1) {
         perror("semget");
         return 1;
@@ -116,11 +128,16 @@ int main(void) {
         return 1;
     }
 
-    printf("Dining philosophers demo started.\n");
-    printf("There are %d philosophers and %d fork semaphores.\n",
-           PHILOSOPHER_COUNT,
-           PHILOSOPHER_COUNT);
-    printf("Each philosopher will eat %d times.\n\n", EAT_TIMES);
+    printf("======================================================================\n");
+    printf("                 DINING PHILOSOPHERS PROBLEM SIMULATION\n");
+    printf("======================================================================\n");
+    printf("[System Config] Philosophers: %d | Eat Times: %d | Deadlock Prevention: YES\n\n",
+           PHILOSOPHER_COUNT, EAT_TIMES);
+    fflush(stdout);
+
+    printf("+--------+-------+----------------+--------------------+\n");
+    printf("|  PID   | Round | Action         | Details            |\n");
+    printf("+--------+-------+----------------+--------------------+\n");
     fflush(stdout);
 
     for (i = 0; i < PHILOSOPHER_COUNT; ++i) {
@@ -141,11 +158,24 @@ int main(void) {
         wait(NULL);
     }
 
+    printf("+--------+-------+----------------+--------------------+\n");
+    printf("All philosophers finished. Semaphore set removed.\n\n");
+    fflush(stdout);
+    printf("\n");
+    fflush(stdout);
+
+    printf("\n==================================================\n");
+    printf("                SUMMARY STATISTICS\n");
+    printf("==================================================\n");
+    for (i = 0; i < PHILOSOPHER_COUNT; ++i) {
+        printf("Philosopher P%d ate %d times.\n", i, EAT_TIMES);
+    }
+    printf("==================================================\n");
+
     if (semctl(semid, 0, IPC_RMID) == -1) {
         perror("semctl IPC_RMID");
         return 1;
     }
 
-    printf("\nAll philosophers finished. Semaphore set removed.\n");
     return 0;
 }

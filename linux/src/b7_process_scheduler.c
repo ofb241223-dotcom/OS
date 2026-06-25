@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define MAX_PROCESSES 10
@@ -37,6 +38,12 @@ typedef struct {
     int front;
     int rear;
 } Queue;
+
+typedef struct {
+    int pid;
+    int start;
+    int end;
+} GanttSegment;
 
 void queue_init(Queue *q) {
     q->front = 0;
@@ -105,45 +112,63 @@ void update_ready_states(ProcessSet *set, int current_time, int executing_index)
 
 void print_header(const char *name) {
     printf("\n============================================================\n");
-    printf("Algorithm: %s\n", name);
+    char title[128];
+    sprintf(title, "PROCESS SCHEDULING: %s", name);
+    int len = strlen(title);
+    int pad = (60 - len) / 2;
+    if (pad < 0) pad = 0;
+    int i;
+    for (i = 0; i < pad; ++i) printf(" ");
+    printf("%s\n", title);
     printf("============================================================\n");
 }
 
-void print_time_slice_state(const ProcessSet *set, int current_time, int executing_index) {
+void print_time_slice_state(const ProcessSet *set, int current_time, int executing_index, int is_mlfq) {
     int i;
 
-    printf("\nTime %d\n", current_time);
-    printf("Running: ");
+    printf("\n[Process Snapshot]\n");
+    printf("Time: %d | Running: ", current_time);
     if (executing_index >= 0) {
-        printf("P%d\n", set->pcb[executing_index].id);
+        printf("P%d\n\n", set->pcb[executing_index].id);
     } else {
-        printf("IDLE\n");
+        printf("IDLE\n\n");
     }
 
-    printf("%-4s %-7s %-7s %-7s %-9s %-7s %-7s\n",
-           "PID",
-           "Arrive",
-           "Serve",
-           "Run",
-           "Remain",
-           "State",
-           "Level");
-
-    for (i = 0; i < set->process_count; ++i) {
-        printf("P%-3d %-7d %-7d %-7d %-9d %-7c %-7d\n",
-               set->pcb[i].id,
-               set->pcb[i].arrival_time,
-               set->pcb[i].service_time,
-               set->pcb[i].run_time,
-               set->pcb[i].remaining_time,
-               set->pcb[i].state,
-               set->pcb[i].queue_level);
+    if (is_mlfq) {
+        printf("+-----+---------+---------+-----+--------+-------+-------+\n");
+        printf("| PID | Arrival | Service | Run | Remain | State | Level |\n");
+        printf("+-----+---------+---------+-----+--------+-------+-------+\n");
+        for (i = 0; i < set->process_count; ++i) {
+            printf("| P%-2d | %-7d | %-7d | %-3d | %-6d | %-5c | %-5d |\n",
+                   set->pcb[i].id,
+                   set->pcb[i].arrival_time,
+                   set->pcb[i].service_time,
+                   set->pcb[i].run_time,
+                   set->pcb[i].remaining_time,
+                   set->pcb[i].state,
+                   set->pcb[i].queue_level);
+        }
+        printf("+-----+---------+---------+-----+--------+-------+-------+\n");
+    } else {
+        printf("+-----+---------+---------+-----+--------+-------+\n");
+        printf("| PID | Arrival | Service | Run | Remain | State |\n");
+        printf("+-----+---------+---------+-----+--------+-------+\n");
+        for (i = 0; i < set->process_count; ++i) {
+            printf("| P%-2d | %-7d | %-7d | %-3d | %-6d | %-5c |\n",
+                   set->pcb[i].id,
+                   set->pcb[i].arrival_time,
+                   set->pcb[i].service_time,
+                   set->pcb[i].run_time,
+                   set->pcb[i].remaining_time,
+                   set->pcb[i].state);
+        }
+        printf("+-----+---------+---------+-----+--------+-------+\n");
     }
+    printf("State: N=New  R=Ready  E=Executing  F=Finished\n");
 }
 
 void finalize_statistics(ProcessSet *set) {
     int i;
-
     for (i = 0; i < set->process_count; ++i) {
         set->pcb[i].turnaround_time = set->pcb[i].finish_time - set->pcb[i].arrival_time;
         set->pcb[i].weighted_turnaround_time =
@@ -151,21 +176,177 @@ void finalize_statistics(ProcessSet *set) {
     }
 }
 
-void print_summary(const ProcessSet *set) {
+int estimate_timeline_capacity(const ProcessSet *set) {
+    int i;
+    int total_service = 0;
+    int max_arrival = 0;
+
+    for (i = 0; i < set->process_count; ++i) {
+        total_service += set->pcb[i].service_time;
+        if (set->pcb[i].arrival_time > max_arrival) {
+            max_arrival = set->pcb[i].arrival_time;
+        }
+    }
+
+    if (total_service + max_arrival + 1 < 1) {
+        return 1;
+    }
+    return total_service + max_arrival + 1;
+}
+
+int *allocate_history_buffer(const ProcessSet *set, int *capacity_out) {
+    int capacity = estimate_timeline_capacity(set);
+    int *history;
+    int i;
+
+    history = (int *)malloc(sizeof(int) * capacity);
+    if (history == NULL) {
+        return NULL;
+    }
+
+    for (i = 0; i < capacity; ++i) {
+        history[i] = -1;
+    }
+
+    *capacity_out = capacity;
+    return history;
+}
+
+void print_summary(const ProcessSet *set, const char *alg_name, const int *history, int total_time) {
     int i;
     double avg_turnaround = 0.0;
     double avg_weighted = 0.0;
+    GanttSegment *segments = NULL;
+    int segment_count = 0;
 
-    printf("\nSummary\n");
-    printf("%-4s %-8s %-8s %-12s %-12s\n",
-           "PID",
-           "Finish",
-           "Service",
-           "Turnaround",
-           "Weighted");
+    printf("\n============================================================\n");
+    char sum_title[128];
+    sprintf(sum_title, "SUMMARY: %s", alg_name);
+    int sum_len = strlen(sum_title);
+    int sum_pad = (60 - sum_len) / 2;
+    if (sum_pad < 0) sum_pad = 0;
+    for (i = 0; i < sum_pad; ++i) printf(" ");
+    printf("%s\n", sum_title);
+    printf("============================================================\n");
 
+    /* 1. 打印甘特图 */
+    printf("\n[Gantt Chart]\n");
+
+    if (total_time > 0) {
+        segments = (GanttSegment *)malloc(sizeof(GanttSegment) * total_time);
+        if (segments == NULL) {
+            printf("  Failed to allocate Gantt chart buffer.\n");
+        }
+    }
+
+    if (total_time > 0 && segments != NULL) {
+        int last_pid = history[0];
+        int start_time = 0;
+        for (i = 1; i < total_time; ++i) {
+            if (history[i] != last_pid) {
+                segments[segment_count].pid = last_pid;
+                segments[segment_count].start = start_time;
+                segments[segment_count].end = i;
+                segment_count++;
+                start_time = i;
+                last_pid = history[i];
+            }
+        }
+        segments[segment_count].pid = last_pid;
+        segments[segment_count].start = start_time;
+        segments[segment_count].end = total_time;
+        segment_count++;
+    }
+
+    if (segment_count > 0) {
+        int total_width = 1;
+        int pos = 0;
+        char *line2;
+
+        for (i = 0; i < segment_count; ++i) {
+            int duration = segments[i].end - segments[i].start;
+            int width = duration * 2;
+            int min_width = (segments[i].pid == -1) ? 6 : 4;
+            if (width < min_width) {
+                width = min_width;
+            }
+            total_width += width + 1;
+        }
+
+        line2 = (char *)malloc(total_width + 16);
+        if (line2 == NULL) {
+            printf("  Failed to allocate Gantt chart scale buffer.\n");
+        } else {
+            memset(line2, ' ', total_width + 15);
+            line2[total_width + 15] = '\0';
+            memcpy(&line2[0], "0", 1);
+
+            printf("  |");
+
+            for (i = 0; i < segment_count; ++i) {
+                int pid = segments[i].pid;
+                int duration = segments[i].end - segments[i].start;
+                int width = duration * 2;
+                int min_width = (pid == -1) ? 6 : 4;
+                char label[16];
+                int label_len;
+                int pad_left;
+                int pad_right;
+                char tick[16];
+                int tick_len;
+                int tick_pos;
+                int j;
+
+                if (width < min_width) {
+                    width = min_width;
+                }
+
+                if (pid == -1) {
+                    strcpy(label, "IDLE");
+                } else {
+                    sprintf(label, "P%d", pid);
+                }
+
+                label_len = strlen(label);
+                pad_left = (width - label_len) / 2;
+                pad_right = width - label_len - pad_left;
+
+                for (j = 0; j < pad_left; ++j) printf(" ");
+                printf("%s", label);
+                for (j = 0; j < pad_right; ++j) printf(" ");
+                printf("|");
+
+                sprintf(tick, "%d", segments[i].end);
+                tick_len = strlen(tick);
+                tick_pos = pos + 1 + width - (tick_len - 1) / 2;
+                memcpy(&line2[tick_pos], tick, tick_len);
+
+                pos += 1 + width;
+            }
+            printf("\n");
+
+            {
+                int last_idx = total_width + 14;
+                while (last_idx >= 0 && line2[last_idx] == ' ') {
+                    last_idx--;
+                }
+                line2[last_idx + 1] = '\0';
+            }
+
+            printf("  %s\n", line2);
+            free(line2);
+        }
+    } else {
+        printf("  No execution segments.\n");
+    }
+
+    // 2. 进程性能指标
+    printf("\n[Per-Process Metrics]\n");
+    printf("+-----+--------+---------+------------+------------+\n");
+    printf("| PID | Finish | Service | Turnaround | Weighted   |\n");
+    printf("+-----+--------+---------+------------+------------+\n");
     for (i = 0; i < set->process_count; ++i) {
-        printf("P%-3d %-8d %-8d %-12.2f %-12.2f\n",
+        printf("| P%-2d | %-6d | %-7d | %-10.2f | %-10.2f |\n",
                set->pcb[i].id,
                set->pcb[i].finish_time,
                set->pcb[i].service_time,
@@ -175,12 +356,18 @@ void print_summary(const ProcessSet *set) {
         avg_turnaround += set->pcb[i].turnaround_time;
         avg_weighted += set->pcb[i].weighted_turnaround_time;
     }
+    printf("+-----+--------+---------+------------+------------+\n");
 
+    // 3. 均值统计
     avg_turnaround /= set->process_count;
     avg_weighted /= set->process_count;
 
-    printf("Average turnaround time: %.2f\n", avg_turnaround);
-    printf("Average weighted turnaround time: %.2f\n", avg_weighted);
+    printf("\n[Average Metrics]\n");
+    printf("Average Turnaround Time         : %.2f\n", avg_turnaround);
+    printf("Average Weighted Turnaround Time: %.2f\n", avg_weighted);
+    printf("============================================================\n");
+
+    free(segments);
 }
 
 int choose_fcfs(const ProcessSet *set, int current_time) {
@@ -312,9 +499,16 @@ void simulate_fcfs(ProcessSet *original) {
     ProcessSet set;
     int time = 0;
     int running = -1;
+    int history_capacity = 0;
+    int *history;
 
     copy_process_set(original, &set);
     initialize_runtime_fields(&set);
+    history = allocate_history_buffer(&set, &history_capacity);
+    if (history == NULL) {
+        printf("Failed to allocate scheduling history buffer.\n");
+        return;
+    }
     print_header("FCFS");
 
     while (!all_finished(&set)) {
@@ -323,7 +517,11 @@ void simulate_fcfs(ProcessSet *original) {
         }
 
         update_ready_states(&set, time, running);
-        print_time_slice_state(&set, time, running);
+        print_time_slice_state(&set, time, running, 0);
+
+        if (time < history_capacity) {
+            history[time] = (running >= 0) ? set.pcb[running].id : -1;
+        }
 
         if (running == -1) {
             time++;
@@ -343,7 +541,8 @@ void simulate_fcfs(ProcessSet *original) {
     }
 
     finalize_statistics(&set);
-    print_summary(&set);
+    print_summary(&set, "FCFS", history, time);
+    free(history);
 }
 
 void simulate_rr(ProcessSet *original, int quantum) {
@@ -354,9 +553,16 @@ void simulate_rr(ProcessSet *original, int quantum) {
     int current_quantum = 0;
     int arrived[MAX_PROCESSES] = {0};
     int i;
+    int history_capacity = 0;
+    int *history;
 
     copy_process_set(original, &set);
     initialize_runtime_fields(&set);
+    history = allocate_history_buffer(&set, &history_capacity);
+    if (history == NULL) {
+        printf("Failed to allocate scheduling history buffer.\n");
+        return;
+    }
     queue_init(&ready);
     print_header("RR");
     printf("Time quantum: %d\n", quantum);
@@ -375,7 +581,11 @@ void simulate_rr(ProcessSet *original, int quantum) {
         }
 
         update_ready_states(&set, time, running);
-        print_time_slice_state(&set, time, running);
+        print_time_slice_state(&set, time, running, 0);
+
+        if (time < history_capacity) {
+            history[time] = (running >= 0) ? set.pcb[running].id : -1;
+        }
 
         if (running == -1) {
             time++;
@@ -401,16 +611,24 @@ void simulate_rr(ProcessSet *original, int quantum) {
     }
 
     finalize_statistics(&set);
-    print_summary(&set);
+    print_summary(&set, "RR", history, time);
+    free(history);
 }
 
 void simulate_spn(ProcessSet *original) {
     ProcessSet set;
     int time = 0;
     int running = -1;
+    int history_capacity = 0;
+    int *history;
 
     copy_process_set(original, &set);
     initialize_runtime_fields(&set);
+    history = allocate_history_buffer(&set, &history_capacity);
+    if (history == NULL) {
+        printf("Failed to allocate scheduling history buffer.\n");
+        return;
+    }
     print_header("SPN");
 
     while (!all_finished(&set)) {
@@ -419,7 +637,11 @@ void simulate_spn(ProcessSet *original) {
         }
 
         update_ready_states(&set, time, running);
-        print_time_slice_state(&set, time, running);
+        print_time_slice_state(&set, time, running, 0);
+
+        if (time < history_capacity) {
+            history[time] = (running >= 0) ? set.pcb[running].id : -1;
+        }
 
         if (running == -1) {
             time++;
@@ -439,22 +661,34 @@ void simulate_spn(ProcessSet *original) {
     }
 
     finalize_statistics(&set);
-    print_summary(&set);
+    print_summary(&set, "SPN", history, time);
+    free(history);
 }
 
 void simulate_srt(ProcessSet *original) {
     ProcessSet set;
     int time = 0;
     int running = -1;
+    int history_capacity = 0;
+    int *history;
 
     copy_process_set(original, &set);
     initialize_runtime_fields(&set);
+    history = allocate_history_buffer(&set, &history_capacity);
+    if (history == NULL) {
+        printf("Failed to allocate scheduling history buffer.\n");
+        return;
+    }
     print_header("SRT");
 
     while (!all_finished(&set)) {
         running = choose_srt(&set, time);
         update_ready_states(&set, time, running);
-        print_time_slice_state(&set, time, running);
+        print_time_slice_state(&set, time, running, 0);
+
+        if (time < history_capacity) {
+            history[time] = (running >= 0) ? set.pcb[running].id : -1;
+        }
 
         if (running == -1) {
             time++;
@@ -473,16 +707,24 @@ void simulate_srt(ProcessSet *original) {
     }
 
     finalize_statistics(&set);
-    print_summary(&set);
+    print_summary(&set, "SRT", history, time);
+    free(history);
 }
 
 void simulate_hrrn(ProcessSet *original) {
     ProcessSet set;
     int time = 0;
     int running = -1;
+    int history_capacity = 0;
+    int *history;
 
     copy_process_set(original, &set);
     initialize_runtime_fields(&set);
+    history = allocate_history_buffer(&set, &history_capacity);
+    if (history == NULL) {
+        printf("Failed to allocate scheduling history buffer.\n");
+        return;
+    }
     print_header("HRRN");
 
     while (!all_finished(&set)) {
@@ -491,7 +733,11 @@ void simulate_hrrn(ProcessSet *original) {
         }
 
         update_ready_states(&set, time, running);
-        print_time_slice_state(&set, time, running);
+        print_time_slice_state(&set, time, running, 0);
+
+        if (time < history_capacity) {
+            history[time] = (running >= 0) ? set.pcb[running].id : -1;
+        }
 
         if (running == -1) {
             time++;
@@ -511,7 +757,8 @@ void simulate_hrrn(ProcessSet *original) {
     }
 
     finalize_statistics(&set);
-    print_summary(&set);
+    print_summary(&set, "HRRN", history, time);
+    free(history);
 }
 
 void simulate_mlfq(ProcessSet *original) {
@@ -523,9 +770,16 @@ void simulate_mlfq(ProcessSet *original) {
     int running = -1;
     int i;
     int level;
+    int history_capacity = 0;
+    int *history;
 
     copy_process_set(original, &set);
     initialize_runtime_fields(&set);
+    history = allocate_history_buffer(&set, &history_capacity);
+    if (history == NULL) {
+        printf("Failed to allocate scheduling history buffer.\n");
+        return;
+    }
     for (i = 0; i < MLFQ_LEVELS; ++i) {
         queue_init(&queues[i]);
     }
@@ -563,7 +817,11 @@ void simulate_mlfq(ProcessSet *original) {
         }
 
         update_ready_states(&set, time, running);
-        print_time_slice_state(&set, time, running);
+        print_time_slice_state(&set, time, running, 1);
+
+        if (time < history_capacity) {
+            history[time] = (running >= 0) ? set.pcb[running].id : -1;
+        }
 
         if (running == -1) {
             time++;
@@ -593,7 +851,8 @@ void simulate_mlfq(ProcessSet *original) {
     }
 
     finalize_statistics(&set);
-    print_summary(&set);
+    print_summary(&set, "MLFQ", history, time);
+    free(history);
 }
 
 void run_algorithm(ProcessSet *set, int algorithm) {
@@ -639,7 +898,9 @@ int main(void) {
     int data_choice;
     int algorithm_choice;
 
-    printf("===== Process Scheduling Demo =====\n");
+    printf("============================================================\n");
+    printf("                  PROCESS SCHEDULING DEMO                   \n");
+    printf("============================================================\n");
     printf("1. Use sample data\n");
     printf("2. Enter custom data\n");
     printf("Choose data source: ");

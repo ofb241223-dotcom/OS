@@ -19,6 +19,13 @@ typedef struct {
     int preset;
 } Job;
 
+typedef struct {
+    int start;
+    int size;
+    int is_used;
+    char owner[32];
+} MemorySegment;
+
 enum {
     FIRST_FIT = 1,
     BEST_FIT = 2,
@@ -147,77 +154,77 @@ int select_free_block(int request_size) {
     return index;
 }
 
-void print_jobs(void) {
-    int i;
+void print_memory_layout(void) {
+    MemorySegment segments[128];
+    int segment_count = 0;
+    int i, j;
 
-    printf("Allocated jobs:\n");
-    printf("%-8s %-10s %-10s %-10s\n", "Job", "Start", "Size", "Type");
-    printf("%-8s %-10d %-10d %-10s\n", "System", 0, 80, "fixed");
-    printf("%-8s %-10d %-10d %-10s\n", "Gap", 130, 20, "fixed");
+    // 1. 放入 System (fixed)
+    segments[segment_count].start = 0;
+    segments[segment_count].size = 80;
+    segments[segment_count].is_used = 1;
+    strcpy(segments[segment_count].owner, "System");
+    segment_count++;
+
+    // 2. 放入 Gap (fixed)
+    segments[segment_count].start = 130;
+    segments[segment_count].size = 20;
+    segments[segment_count].is_used = 1;
+    strcpy(segments[segment_count].owner, "Gap");
+    segment_count++;
+
+    // 3. 放入所有 active 的作业
     for (i = 0; i < MAX_JOBS; ++i) {
         if (jobs[i].active) {
-            printf("Job%-4d %-10d %-10d %-10s\n",
-                   jobs[i].id,
-                   jobs[i].start,
-                   jobs[i].size,
-                   jobs[i].preset ? "preset" : "dynamic");
+            segments[segment_count].start = jobs[i].start;
+            segments[segment_count].size = jobs[i].size;
+            segments[segment_count].is_used = 1;
+            sprintf(segments[segment_count].owner, "Job %d", jobs[i].id);
+            segment_count++;
         }
     }
-    printf("\n");
-}
 
-void print_free_blocks(void) {
-    int i;
-    FreeBlock temp[MAX_FREE];
-
+    // 4. 放入所有空闲分区
     for (i = 0; i < free_count; ++i) {
-        temp[i] = free_blocks[i];
+        segments[segment_count].start = free_blocks[i].start;
+        segments[segment_count].size = free_blocks[i].size;
+        segments[segment_count].is_used = 0;
+        strcpy(segments[segment_count].owner, "-");
+        segment_count++;
     }
 
-    if (strategy == FIRST_FIT) {
-        sort_free_by_address();
-    } else if (strategy == BEST_FIT) {
-        int a, b;
-        for (a = 0; a < free_count - 1; ++a) {
-            for (b = a + 1; b < free_count; ++b) {
-                if (free_blocks[a].size > free_blocks[b].size) {
-                    FreeBlock swap = free_blocks[a];
-                    free_blocks[a] = free_blocks[b];
-                    free_blocks[b] = swap;
-                }
-            }
-        }
-    } else {
-        int a, b;
-        for (a = 0; a < free_count - 1; ++a) {
-            for (b = a + 1; b < free_count; ++b) {
-                if (free_blocks[a].size < free_blocks[b].size) {
-                    FreeBlock swap = free_blocks[a];
-                    free_blocks[a] = free_blocks[b];
-                    free_blocks[b] = swap;
-                }
+    // 5. 排序
+    for (i = 0; i < segment_count - 1; ++i) {
+        for (j = i + 1; j < segment_count; ++j) {
+            if (segments[i].start > segments[j].start) {
+                MemorySegment temp = segments[i];
+                segments[i] = segments[j];
+                segments[j] = temp;
             }
         }
     }
 
-    printf("Free block table (%s order):\n", strategy_name(strategy));
-    printf("%-8s %-10s %-10s\n", "Index", "Start", "Size");
-    for (i = 0; i < free_count; ++i) {
-        printf("%-8d %-10d %-10d\n", i + 1, free_blocks[i].start, free_blocks[i].size);
+    // 6. 打印表格
+    printf("[Memory Layout]\n");
+    printf("+---------+---------+---------+----------+-------------+\n");
+    printf("| Start   | End     | Size    | Status   | Owner       |\n");
+    printf("+---------+---------+---------+----------+-------------+\n");
+    for (i = 0; i < segment_count; ++i) {
+        int end = segments[i].start + segments[i].size - 1;
+        char size_str[32];
+        sprintf(size_str, "%d KB", segments[i].size);
+        printf("| %-7d | %-7d | %-7s | %-8s | %-11s |\n",
+               segments[i].start,
+               end,
+               size_str,
+               segments[i].is_used ? "Used" : "Free",
+               segments[i].owner);
     }
-    printf("\n");
-
-    for (i = 0; i < free_count; ++i) {
-        free_blocks[i] = temp[i];
-    }
+    printf("+---------+---------+---------+----------+-------------+\n");
 }
 
 void show_state(void) {
-    printf("\n========== Current State ==========\n");
-    printf("Memory size: %d KB\n", MEMORY_SIZE);
-    printf("Placement strategy: %s\n\n", strategy_name(strategy));
-    print_jobs();
-    print_free_blocks();
+    print_memory_layout();
 }
 
 int allocate_job(int id, int size) {
@@ -225,13 +232,13 @@ int allocate_job(int id, int size) {
     int start;
 
     if (jobs[id - 1].active) {
-        printf("Job %d already exists.\n", id);
+        printf("[FAILED] Job %d already exists.\n", id);
         return 0;
     }
 
     block_index = select_free_block(size);
     if (block_index == -1) {
-        printf("Job %d request %dKB failed: no suitable free block.\n", id, size);
+        printf("[FAILED] Job %d request %d KB failed: no suitable free block.\n", id, size);
         return 0;
     }
 
@@ -247,7 +254,7 @@ int allocate_job(int id, int size) {
         free_count--;
     }
 
-    printf("Job %d allocated %dKB at address %d.\n", id, size, start);
+    printf("[SUCCESS] Job %d allocated %d KB at address %d.\n", id, size, start);
     return 1;
 }
 
@@ -266,13 +273,13 @@ void describe_neighbors(int start, int size) {
     }
 
     if (has_upper && has_lower) {
-        printf("Neighbor situation: upper and lower adjacent free blocks.\n");
+        printf("[Neighbor] Upper and lower adjacent free blocks detected.\n");
     } else if (has_upper) {
-        printf("Neighbor situation: only upper adjacent free block.\n");
+        printf("[Neighbor] Only upper adjacent free block detected.\n");
     } else if (has_lower) {
-        printf("Neighbor situation: only lower adjacent free block.\n");
+        printf("[Neighbor] Only lower adjacent free block detected.\n");
     } else {
-        printf("Neighbor situation: no adjacent free block.\n");
+        printf("[Neighbor] No adjacent free block detected.\n");
     }
 }
 
@@ -280,11 +287,11 @@ int release_job(int id) {
     int index = id - 1;
 
     if (!jobs[index].active) {
-        printf("Job %d is not allocated.\n", id);
+        printf("[FAILED] Job %d is not allocated.\n", id);
         return 0;
     }
 
-    printf("Releasing Job %d at address %d, size %dKB.\n",
+    printf("[RELEASE] Releasing Job %d at address %d, size %d KB.\n",
            jobs[index].id,
            jobs[index].start,
            jobs[index].size);
@@ -297,112 +304,65 @@ int release_job(int id) {
 }
 
 void run_fixed_sequence(void) {
-    printf("\n===== Fixed experiment sequence begins =====\n");
+    printf("Strategy: %s\n", strategy_name(strategy));
+
+    printf("\n>>> [Current Step] Initial State\n");
     show_state();
 
-    printf("Step 1: Job 1 requests 50KB.\n");
+    printf("\n>>> [Current Step] Step 1: Job 1 requests 50 KB\n");
     allocate_job(1, 50);
     show_state();
 
-    printf("Step 2: Release preset Job 2.\n");
+    printf("\n>>> [Current Step] Step 2: Release preset Job 2\n");
     release_job(2);
     show_state();
 
-    printf("Step 3: Release preset Job 3.\n");
+    printf("\n>>> [Current Step] Step 3: Release preset Job 3\n");
     release_job(3);
     show_state();
 
-    printf("Step 4: Job 4 requests 200KB.\n");
+    printf("\n>>> [Current Step] Step 4: Job 4 requests 200 KB\n");
     allocate_job(4, 200);
     show_state();
 
-    printf("Step 5: Release Job 1.\n");
+    printf("\n>>> [Current Step] Step 5: Release Job 1\n");
     release_job(1);
     show_state();
 
-    printf("Step 6: Release Job 4.\n");
+    printf("\n>>> [Current Step] Step 6: Release Job 4\n");
     release_job(4);
     show_state();
 
-    printf("Step 7: Job 5 requests 600KB.\n");
+    printf("\n>>> [Current Step] Step 7: Job 5 requests 600 KB\n");
     allocate_job(5, 600);
     show_state();
-
-    printf("===== Fixed experiment sequence ends =====\n");
-}
-
-void custom_allocate(void) {
-    int id;
-    int size;
-
-    printf("Enter job id and size(KB): ");
-    scanf("%d%d", &id, &size);
-    allocate_job(id, size);
-}
-
-void custom_release(void) {
-    int id;
-    printf("Enter job id to release: ");
-    scanf("%d", &id);
-    release_job(id);
-}
-
-void set_strategy(void) {
-    int s;
-    printf("Choose strategy: 1.First Fit  2.Best Fit  3.Worst Fit : ");
-    scanf("%d", &s);
-    if (s >= 1 && s <= 3) {
-        strategy = s;
-        printf("Strategy changed to %s.\n", strategy_name(strategy));
-    } else {
-        printf("Invalid strategy.\n");
-    }
 }
 
 int main(void) {
     int choice;
 
     reset_system();
-    printf("===== Dynamic Partition Management Demo =====\n");
-
-    while (1) {
-        printf("\nMenu\n");
-        printf("1. Show current state\n");
-        printf("2. Set placement strategy\n");
-        printf("3. Run fixed experiment sequence\n");
-        printf("4. Allocate custom job\n");
-        printf("5. Release custom job\n");
-        printf("6. Reset system\n");
-        printf("0. Exit\n");
-        printf("Choose: ");
-        scanf("%d", &choice);
-
-        switch (choice) {
-            case 1:
-                show_state();
-                break;
-            case 2:
-                set_strategy();
-                break;
-            case 3:
-                run_fixed_sequence();
-                break;
-            case 4:
-                custom_allocate();
-                break;
-            case 5:
-                custom_release();
-                break;
-            case 6:
-                reset_system();
-                printf("System reset completed.\n");
-                break;
-            case 0:
-                printf("Program finished.\n");
-                return 0;
-            default:
-                printf("Invalid choice.\n");
-                break;
-        }
+    printf("============================================================\n");
+    printf("             DYNAMIC PARTITION MANAGEMENT SIMULATOR         \n");
+    printf("============================================================\n");
+    printf("Choose strategy:\n");
+    printf("1. First Fit\n");
+    printf("2. Best Fit\n");
+    printf("3. Worst Fit\n");
+    printf("Choose (1-3): ");
+    
+    if (scanf("%d", &choice) != 1) {
+        return 0;
     }
+    
+    if (choice < 1 || choice > 3) {
+        printf("Invalid choice. Exiting.\n");
+        return 0;
+    }
+    
+    strategy = choice;
+    reset_system();
+    run_fixed_sequence();
+    
+    return 0;
 }

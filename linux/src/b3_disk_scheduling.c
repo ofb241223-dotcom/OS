@@ -11,6 +11,12 @@ typedef struct {
     int direction; /* 1 means up, -1 means down */
 } DiskInput;
 
+typedef struct {
+    const char *name;
+    int total_movement;
+    double average_seek;
+} SimulationResult;
+
 int abs_diff(int a, int b) {
     return a > b ? (a - b) : (b - a);
 }
@@ -57,8 +63,7 @@ double display_average(const char *name, const DiskInput *input, int movement, i
 }
 
 void sort_array(int arr[], int n) {
-    int i;
-    int j;
+    int i, j;
 
     for (i = 0; i < n - 1; ++i) {
         for (j = 0; j < n - 1 - i; ++j) {
@@ -71,23 +76,50 @@ void sort_array(int arr[], int n) {
     }
 }
 
-void print_result(const char *name, const DiskInput *input, const int order[], int count, int movement) {
+void print_result(const char *name, const DiskInput *input, const int order[], int count, int movement, SimulationResult *result) {
     int i;
     int current = input->head;
+    double avg = display_average(name, input, movement, count);
 
-    printf("\n%s (from track %d)\n", name, input->head);
-    printf("%-18s %-18s\n", "Next track", "Tracks moved");
+    result->name = name;
+    result->total_movement = movement;
+    result->average_seek = avg;
+
+    printf("\n--------------------------------------------------\n");
+    printf("                 %s Simulation\n", name);
+    printf("--------------------------------------------------\n");
+    printf("Initial head position: %d\n", input->head);
+    printf("Initial direction: %s\n\n", input->direction == 1 ? "UP" : "DOWN");
+
+    printf("+---------+------------+--------------+\n");
+    printf("| Step    | Next Track | Tracks Moved |\n");
+    printf("+---------+------------+--------------+\n");
 
     for (i = 0; i < count; ++i) {
         int moved = abs_diff(current, order[i]);
-        printf("%-18d %-18d\n", order[i], moved);
+        printf("|   %3d   |    %4d    |     %4d     |\n", i + 1, order[i], moved);
         current = order[i];
     }
 
-    printf("Average seek length: %.1f\n", display_average(name, input, movement, count));
+    printf("+---------+------------+--------------+\n");
+    printf("Total tracks traveled: %d\n", movement);
+    printf("Average seek length: %.1f\n", avg);
 }
 
-void simulate_fifo(const DiskInput *input) {
+void print_summary(const SimulationResult results[], int num_results) {
+    int i;
+    printf("\n================== Disk Scheduling Algorithm Comparison ==================\n");
+    printf("+------------+-----------------------+---------------------+\n");
+    printf("| Algorithm  | Total Tracks Traveled | Average Seek Length |\n");
+    printf("+------------+-----------------------+---------------------+\n");
+    for (i = 0; i < num_results; ++i) {
+        printf("| %-10s |         %5d         |        %5.1f        |\n",
+               results[i].name, results[i].total_movement, results[i].average_seek);
+    }
+    printf("+------------+-----------------------+---------------------+\n\n");
+}
+
+void simulate_fifo(const DiskInput *input, SimulationResult *result) {
     int order[MAX_REQUESTS];
     int movement = 0;
     int current = input->head;
@@ -99,10 +131,10 @@ void simulate_fifo(const DiskInput *input) {
         current = input->requests[i];
     }
 
-    print_result("FIFO", input, order, input->request_count, movement);
+    print_result("FIFO", input, order, input->request_count, movement, result);
 }
 
-void simulate_sstf(const DiskInput *input) {
+void simulate_sstf(const DiskInput *input, SimulationResult *result) {
     int visited[MAX_REQUESTS] = {0};
     int order[MAX_REQUESTS];
     int movement = 0;
@@ -134,10 +166,10 @@ void simulate_sstf(const DiskInput *input) {
         current = input->requests[best_index];
     }
 
-    print_result("SSTF", input, order, input->request_count, movement);
+    print_result("SSTF", input, order, input->request_count, movement, result);
 }
 
-void simulate_scan(const DiskInput *input) {
+void simulate_scan(const DiskInput *input, SimulationResult *result) {
     int sorted[MAX_REQUESTS];
     int order[MAX_REQUESTS];
     int count = 0;
@@ -177,10 +209,10 @@ void simulate_scan(const DiskInput *input) {
         current = order[i];
     }
 
-    print_result("SCAN", input, order, count, movement);
+    print_result("SCAN", input, order, count, movement, result);
 }
 
-void simulate_cscan(const DiskInput *input) {
+void simulate_cscan(const DiskInput *input, SimulationResult *result) {
     int sorted[MAX_REQUESTS];
     int order[MAX_REQUESTS];
     int count = 0;
@@ -220,7 +252,7 @@ void simulate_cscan(const DiskInput *input) {
         current = order[i];
     }
 
-    print_result("C-SCAN", input, order, count, movement);
+    print_result("C-SCAN", input, order, count, movement, result);
 }
 
 int read_custom_data(DiskInput *input) {
@@ -264,16 +296,19 @@ int read_custom_data(DiskInput *input) {
 
 int main(void) {
     DiskInput input;
+    SimulationResult results[4];
 
     if (!read_custom_data(&input)) {
         printf("Invalid input.\n");
         return 1;
     }
 
-    simulate_fifo(&input);
-    simulate_sstf(&input);
-    simulate_scan(&input);
-    simulate_cscan(&input);
+    simulate_fifo(&input, &results[0]);
+    simulate_sstf(&input, &results[1]);
+    simulate_scan(&input, &results[2]);
+    simulate_cscan(&input, &results[3]);
+
+    print_summary(results, 4);
 
     return 0;
 }

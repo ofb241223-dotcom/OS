@@ -107,25 +107,29 @@ int find_file_in_current_dir(const char *name) {
 
 void require_login(void) {
     if (current_user[0] == '\0') {
-        printf("Please login first.\n");
+        printf("[ERROR] Please login first.\n");
     }
 }
 
 void cmd_help(void) {
-    printf("Supported commands:\n");
-    printf("  login <user>\n");
-    printf("  logout\n");
-    printf("  dir\n");
-    printf("  create <file> <r|w|rw>\n");
-    printf("  open <file> <r|w|rw>\n");
-    printf("  close <file>\n");
-    printf("  write <file> <text>\n");
-    printf("  read <file>\n");
-    printf("  delete <file>\n");
-    printf("  chmod <file> <r|w|rw>\n");
-    printf("  pwd\n");
-    printf("  help\n");
-    printf("  exit\n");
+    printf("[Help]\n");
+    printf("+----------------------+------------------------------+\n");
+    printf("| Command              | Description                  |\n");
+    printf("+----------------------+------------------------------+\n");
+    printf("| login <user>         | Log in or create user        |\n");
+    printf("| logout               | Log out current user         |\n");
+    printf("| dir                  | List directory               |\n");
+    printf("| create <file> <mode> | Create file                  |\n");
+    printf("| open <file> <mode>   | Open file                    |\n");
+    printf("| close <file>         | Close file                   |\n");
+    printf("| write <file> <text>  | Write file                   |\n");
+    printf("| read <file>          | Read file                    |\n");
+    printf("| delete <file>        | Delete file                  |\n");
+    printf("| chmod <file> <mode>  | Change protection            |\n");
+    printf("| pwd                  | Show current path            |\n");
+    printf("| help                 | Show help                    |\n");
+    printf("| exit / quit / bye    | Exit system                  |\n");
+    printf("+----------------------+------------------------------+\n");
 }
 
 void cmd_pwd(void) {
@@ -140,26 +144,26 @@ void cmd_login(const char *user) {
     int index;
 
     if (user == NULL || user[0] == '\0') {
-        printf("Usage: login <user>\n");
+        printf("[ERROR] Usage: login <user>\n");
         return;
     }
 
     index = create_user_if_needed(user);
     if (index == -1) {
-        printf("User directory table is full.\n");
+        printf("[ERROR] User directory table is full.\n");
         return;
     }
 
     strncpy(current_user, user, MAX_NAME_LEN - 1);
     current_user[MAX_NAME_LEN - 1] = '\0';
     open_file_name[0] = '\0';
-    printf("Login success. Current directory: /%s\n", current_user);
+    printf("[SUCCESS] Logged in as '%s'. Current directory: /%s\n", current_user, current_user);
 }
 
 void cmd_logout(void) {
     current_user[0] = '\0';
     open_file_name[0] = '\0';
-    printf("Logout success.\n");
+    printf("[SUCCESS] Logged out.\n");
 }
 
 void cmd_dir(void) {
@@ -167,24 +171,30 @@ void cmd_dir(void) {
     int found = 0;
 
     if (current_user[0] == '\0') {
-        printf("Main directory:\n");
+        printf("[Main Directory]\n");
+        printf("+----------------------+\n");
+        printf("| Directory Name       |\n");
+        printf("+----------------------+\n");
         for (i = 0; i < MAX_USERS; ++i) {
             if (user_dirs[i].used) {
-                printf("  <DIR> %s\n", user_dirs[i].name);
+                printf("| %-20s |\n", user_dirs[i].name);
                 found = 1;
             }
         }
         if (!found) {
-            printf("  (empty)\n");
+            printf("| %-20s |\n", "(empty)");
         }
+        printf("+----------------------+\n");
         return;
     }
 
-    printf("Files in /%s\n", current_user);
-    printf("%-16s %-10s %-10s %-10s\n", "Name", "Addr", "Protect", "Length");
+    printf("[Directory: /%s]\n", current_user);
+    printf("+------------+----------+---------+--------+\n");
+    printf("| Name       | Addr     | Protect | Length |\n");
+    printf("+------------+----------+---------+--------+\n");
     for (i = 0; i < MAX_FILES; ++i) {
         if (files[i].used && strcmp(files[i].owner, current_user) == 0) {
-            printf("%-16s %-10d %-10s %-10d\n",
+            printf("| %-10s | %-8d | %-7s | %-6d |\n",
                    files[i].name,
                    files[i].physical_addr,
                    permission_to_text(files[i].protect_code),
@@ -193,8 +203,9 @@ void cmd_dir(void) {
         }
     }
     if (!found) {
-        printf("(empty)\n");
+        printf("| %-40s |\n", "(empty)");
     }
+    printf("+------------+----------+---------+--------+\n");
 }
 
 void cmd_create(const char *name, const char *permission_text) {
@@ -207,18 +218,18 @@ void cmd_create(const char *name, const char *permission_text) {
     }
 
     if (name == NULL || permission_text == NULL) {
-        printf("Usage: create <file> <r|w|rw>\n");
+        printf("[ERROR] Usage: create <file> <r|w|rw>\n");
         return;
     }
 
     if (find_file_in_current_dir(name) != -1) {
-        printf("File already exists.\n");
+        printf("[ERROR] File already exists.\n");
         return;
     }
 
     permission = permission_from_text(permission_text);
     if (permission == 0) {
-        printf("Invalid protection code.\n");
+        printf("[ERROR] Invalid protection code.\n");
         return;
     }
 
@@ -235,7 +246,7 @@ void cmd_create(const char *name, const char *permission_text) {
             files[i].is_open = 0;
             files[i].open_mode = 0;
             files[i].content[0] = '\0';
-            printf("File created: %s (addr=%d, protect=%s)\n",
+            printf("[SUCCESS] File created: %s (addr=%d, protect=%s)\n",
                    files[i].name,
                    files[i].physical_addr,
                    permission_to_text(files[i].protect_code));
@@ -243,7 +254,7 @@ void cmd_create(const char *name, const char *permission_text) {
         }
     }
 
-    printf("File table is full.\n");
+    printf("[ERROR] File table is full.\n");
 }
 
 void cmd_open(const char *name, const char *mode_text) {
@@ -256,24 +267,24 @@ void cmd_open(const char *name, const char *mode_text) {
     }
 
     if (name == NULL || mode_text == NULL) {
-        printf("Usage: open <file> <r|w|rw>\n");
+        printf("[ERROR] Usage: open <file> <r|w|rw>\n");
         return;
     }
 
     index = find_file_in_current_dir(name);
     if (index == -1) {
-        printf("File not found.\n");
+        printf("[ERROR] File not found.\n");
         return;
     }
 
     mode = permission_from_text(mode_text);
     if (mode == 0) {
-        printf("Invalid open mode.\n");
+        printf("[ERROR] Invalid open mode.\n");
         return;
     }
 
     if ((mode & files[index].protect_code) != mode) {
-        printf("Open denied by protection code.\n");
+        printf("[ERROR] Open denied by protection code.\n");
         return;
     }
 
@@ -281,7 +292,7 @@ void cmd_open(const char *name, const char *mode_text) {
     files[index].open_mode = mode;
     strncpy(open_file_name, name, MAX_NAME_LEN - 1);
     open_file_name[MAX_NAME_LEN - 1] = '\0';
-    printf("File opened: %s mode=%s\n", name, permission_to_text(mode));
+    printf("[SUCCESS] File opened: %s (mode=%s)\n", name, permission_to_text(mode));
 }
 
 void cmd_close(const char *name) {
@@ -293,13 +304,13 @@ void cmd_close(const char *name) {
     }
 
     if (name == NULL) {
-        printf("Usage: close <file>\n");
+        printf("[ERROR] Usage: close <file>\n");
         return;
     }
 
     index = find_file_in_current_dir(name);
     if (index == -1) {
-        printf("File not found.\n");
+        printf("[ERROR] File not found.\n");
         return;
     }
 
@@ -308,7 +319,7 @@ void cmd_close(const char *name) {
     if (strcmp(open_file_name, name) == 0) {
         open_file_name[0] = '\0';
     }
-    printf("File closed: %s\n", name);
+    printf("[SUCCESS] File closed: %s\n", name);
 }
 
 void cmd_write(const char *name, const char *text) {
@@ -321,23 +332,23 @@ void cmd_write(const char *name, const char *text) {
     }
 
     if (name == NULL || text == NULL) {
-        printf("Usage: write <file> <text>\n");
+        printf("[ERROR] Usage: write <file> <text>\n");
         return;
     }
 
     index = find_file_in_current_dir(name);
     if (index == -1) {
-        printf("File not found.\n");
+        printf("[ERROR] File not found.\n");
         return;
     }
 
     if (!files[index].is_open) {
-        printf("Write denied: file is not open.\n");
+        printf("[ERROR] Write denied: file is not open.\n");
         return;
     }
 
     if ((files[index].open_mode & 2) == 0 || (files[index].protect_code & 2) == 0) {
-        printf("Write denied by protection or open mode.\n");
+        printf("[ERROR] Write denied by protection or open mode.\n");
         return;
     }
 
@@ -345,7 +356,7 @@ void cmd_write(const char *name, const char *text) {
     files[index].content[MAX_CONTENT_LEN - 1] = '\0';
     len = strlen(files[index].content);
     files[index].length = (int)len;
-    printf("Write success. Length=%d\n", files[index].length);
+    printf("[SUCCESS] Write completed. Length=%d\n", files[index].length);
 }
 
 void cmd_read(const char *name) {
@@ -357,27 +368,31 @@ void cmd_read(const char *name) {
     }
 
     if (name == NULL) {
-        printf("Usage: read <file>\n");
+        printf("[ERROR] Usage: read <file>\n");
         return;
     }
 
     index = find_file_in_current_dir(name);
     if (index == -1) {
-        printf("File not found.\n");
+        printf("[ERROR] File not found.\n");
         return;
     }
 
     if (!files[index].is_open) {
-        printf("Read denied: file is not open.\n");
+        printf("[ERROR] Read denied: file is not open.\n");
         return;
     }
 
     if ((files[index].open_mode & 1) == 0 || (files[index].protect_code & 1) == 0) {
-        printf("Read denied by protection or open mode.\n");
+        printf("[ERROR] Read denied by protection or open mode.\n");
         return;
     }
 
-    printf("Content of %s: %s\n", name, files[index].content);
+    if (files[index].length == 0) {
+        printf("[INFO] Content of %s: (empty)\n", name);
+    } else {
+        printf("[INFO] Content of %s: %s\n", name, files[index].content);
+    }
 }
 
 void cmd_delete(const char *name) {
@@ -389,23 +404,23 @@ void cmd_delete(const char *name) {
     }
 
     if (name == NULL) {
-        printf("Usage: delete <file>\n");
+        printf("[ERROR] Usage: delete <file>\n");
         return;
     }
 
     index = find_file_in_current_dir(name);
     if (index == -1) {
-        printf("File not found.\n");
+        printf("[ERROR] File not found.\n");
         return;
     }
 
     if (files[index].is_open) {
-        printf("Delete denied: file is open.\n");
+        printf("[ERROR] Delete denied: file is open.\n");
         return;
     }
 
     memset(&files[index], 0, sizeof(FileEntry));
-    printf("File deleted: %s\n", name);
+    printf("[SUCCESS] File deleted: %s\n", name);
 }
 
 void cmd_chmod(const char *name, const char *permission_text) {
@@ -418,24 +433,24 @@ void cmd_chmod(const char *name, const char *permission_text) {
     }
 
     if (name == NULL || permission_text == NULL) {
-        printf("Usage: chmod <file> <r|w|rw>\n");
+        printf("[ERROR] Usage: chmod <file> <r|w|rw>\n");
         return;
     }
 
     index = find_file_in_current_dir(name);
     if (index == -1) {
-        printf("File not found.\n");
+        printf("[ERROR] File not found.\n");
         return;
     }
 
     permission = permission_from_text(permission_text);
     if (permission == 0) {
-        printf("Invalid protection code.\n");
+        printf("[ERROR] Invalid protection code.\n");
         return;
     }
 
     files[index].protect_code = permission;
-    printf("Protection updated: %s -> %s\n", name, permission_to_text(permission));
+    printf("[SUCCESS] Protection updated: %s (protect=%s)\n", name, permission_to_text(permission));
 }
 
 void trim_newline(char *text) {
@@ -453,8 +468,11 @@ int main(void) {
     char *arg1;
     char *arg2;
 
-    printf("Simple Two-Level File System Demo\n");
-    printf("Type 'help' to see supported commands.\n");
+    printf("============================================================\n");
+    printf("                 SIMPLE TWO-LEVEL FILE SYSTEM               \n");
+    printf("============================================================\n");
+    printf("System initialized. Type 'help' to list available commands.\n");
+    printf("============================================================\n");
 
     while (1) {
         if (current_user[0] == '\0') {
@@ -510,14 +528,14 @@ int main(void) {
             (void)write_cmd;
 
             if (write_file == NULL || write_text == NULL) {
-                printf("Usage: write <file> <text>\n");
+                printf("[ERROR] Usage: write <file> <text>\n");
             } else {
                 while (*write_text == ' ') {
                     write_text++;
                 }
 
                 if (*write_text == '\0') {
-                    printf("Usage: write <file> <text>\n");
+                    printf("[ERROR] Usage: write <file> <text>\n");
                 } else {
                     cmd_write(write_file, write_text);
                 }
@@ -531,11 +549,12 @@ int main(void) {
         } else if (strcmp(command, "exit") == 0 ||
                    strcmp(command, "quit") == 0 ||
                    strcmp(command, "bye") == 0) {
-            printf("File system halted.\n");
+            printf("[SUCCESS] File system halted.\n");
             break;
         } else {
-            printf("Unknown command. Type 'help' for help.\n");
+            printf("[ERROR] Unknown command. Type 'help' for help.\n");
         }
+        printf("\n");
     }
 
     return 0;

@@ -82,7 +82,15 @@ void reap_background_jobs(void) {
     pid_t pid;
 
     while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
-        printf("[background completed] pid=%d\n", pid);
+        const char *cmd = "unknown";
+        int i;
+        for (i = 0; i < MAX_JOBS; ++i) {
+            if (jobs[i].pid == pid) {
+                cmd = jobs[i].command;
+                break;
+            }
+        }
+        printf("\n[BG] Completed Job - PID: %d | Command: %s\n", pid, cmd);
         mark_job_finished(pid);
     }
 
@@ -96,29 +104,39 @@ void show_jobs(void) {
     reap_background_jobs();
     for (i = 0; i < MAX_JOBS; ++i) {
         if (jobs[i].pid != 0) {
-            printf("pid=%d  status=%s  cmd=%s\n",
+            if (!found) {
+                printf("+--------+------------+-----------------------------------------------+\n");
+                printf("| PID    | Status     | Command                                       |\n");
+                printf("+--------+------------+-----------------------------------------------+\n");
+            }
+            printf("| %-6d | %-10s | %-45s |\n",
                    jobs[i].pid,
-                   jobs[i].running ? "running" : "finished",
+                   jobs[i].running ? "RUNNING" : "FINISHED",
                    jobs[i].command);
             found = 1;
         }
     }
 
-    if (!found) {
-        printf("No background jobs.\n");
+    if (found) {
+        printf("+--------+------------+-----------------------------------------------+\n");
+    } else {
+        printf("No active background jobs found.\n");
     }
 }
 
 void print_help(void) {
-    printf("Mini Shell commands:\n");
-    printf("  cd <dir>      change directory, or print current directory\n");
-    printf("  environ       print all environment variables\n");
-    printf("  echo <text>   print text\n");
-    printf("  help          show this help message\n");
-    printf("  jobs          show background child processes\n");
-    printf("  quit/exit/bye exit the shell\n");
-    printf("External commands are supported.\n");
-    printf("Append '&' to run a command in the background.\n");
+    printf("+----------------------+-----------------------------------------------+\n");
+    printf("| Command              | Description                                   |\n");
+    printf("+----------------------+-----------------------------------------------+\n");
+    printf("| cd [dir]             | Change directory, or print current directory  |\n");
+    printf("| environ              | Print all environment variables               |\n");
+    printf("| echo [text]          | Print text to standard output                 |\n");
+    printf("| jobs                 | List background child processes               |\n");
+    printf("| help                 | Display this help dashboard                   |\n");
+    printf("| quit / exit / bye    | Terminate the Mini Shell                      |\n");
+    printf("+----------------------+-----------------------------------------------+\n");
+    printf("| Note: Append '&' to run any external command in the background.      |\n");
+    printf("+----------------------+-----------------------------------------------+\n");
 }
 
 void print_environ(void) {
@@ -237,7 +255,7 @@ void execute_external(char *args[], int background, const char *raw_command) {
 
     if (background) {
         add_job(pid, raw_command);
-        printf("[background started] pid=%d cmd=%s\n", pid, raw_command);
+        printf("[BG] Started Job - PID: %d | Command: %s\n", pid, raw_command);
     } else {
         waitpid(pid, NULL, 0);
     }
@@ -248,8 +266,11 @@ int main(void) {
     char raw_line[MAX_LINE];
     char *args[MAX_ARGS];
 
-    printf("===== Mini Shell Demo =====\n");
-    printf("Type 'help' to see supported commands.\n");
+    printf("======================================================================\n");
+    printf("                         MINI SHELL INTERPRETER\n");
+    printf("======================================================================\n");
+    printf("System initialized. Type 'help' to list available commands.\n");
+    printf("======================================================================\n\n");
 
     while (1) {
         int argc;
@@ -257,7 +278,12 @@ int main(void) {
         int builtin_result;
 
         reap_background_jobs();
-        printf("myshell> ");
+        char cwd[PATH_MAX];
+        if (getcwd(cwd, sizeof(cwd)) != NULL) {
+            printf("myshell:[%s]$ ", cwd);
+        } else {
+            printf("myshell>$ ");
+        }
         fflush(stdout);
 
         if (fgets(line, sizeof(line), stdin) == NULL) {

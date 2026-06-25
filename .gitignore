@@ -3,3 +3,6 @@ windows/src/output/*
 *.bak
 *.png
 *.jpg
+linux/output/_*
+linux/output/*.txt
+windows/output/_*
